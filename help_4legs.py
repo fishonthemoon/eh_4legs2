@@ -5,7 +5,8 @@ import numpy as np
 import os
 from autoencoder.autoencoder import Autoencoder
 from feature_extraction.pyramid_data_loader import PyramidEmbeddingDataloader
-from helpers import o3d_knn
+from helpers import o3d_knn, l1_loss_v1
+from attention.attention import LanguageFeatureAttention
 
 LEGS_FEATURE_DIM = 128
 ENCODER_FEATURE_DIM =768
@@ -133,3 +134,28 @@ def generate_neighbor_indices(gaussians):
     
     return neighbor_indicies
 
+def initialize_params_and_optimizer(num_points, legs_lr,attn_lr):
+    attn = LanguageFeatureAttention(LEGS_FEATURE_DIM).cuda()
+    params = {
+        'legs_features': np.zeros((num_points, LEGS_FEATURE_DIM)),
+    }
+    params = {k: torch.nn.Parameter(torch.tensor(v).cuda().float().contiguous().requires_grad_(True)) for k, v in
+              params.items()}
+    lrs = {
+        'legs_features':legs_lr,
+    }
+    param_groups = [{'params': [v], 'name': k, 'lr': lrs[k]} for k, v in params.items()]
+    param_groups.append({"params":list(attn.parameters()), "name":"attn", "lr": attn_lr})
+    return params, torch.optim.Adam(param_groups, lr=0.0, eps=1e-15), attn
+
+def get_loss(params,attn, gt_feat, neighbor_indices,gaussians,camera):
+    losses = {}
+    torch.cuda.empty_cache()
+    feats = attn(params["legs_features"],neighbor_indices)   
+    torch.cuda.empty_cache() 
+    feature_legs = project_features(gaussians, feats, camera)  
+    gt_feat = gt_feat.cuda()
+    losses['legs_features'] = l1_loss_v1(feature_legs, gt_feat)
+    loss_weights = {'legs_features': 1.0}
+    loss = sum([loss_weights[k] * v for k, v in losses.items()])
+    return loss
