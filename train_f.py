@@ -11,11 +11,12 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, OptimizationParams
-from arguments import FDMHiddenParams as ModelHiddenParams
+from arguments import FDMHiddenParams ,get_combined_args
 from utils.timer import Timer
 import torch.nn.functional as F
 from time import time
-from help_4legs import initialize_params_and_optimizer, generate_neighbor_indices, get_gt_feat, get_loss
+from help_4legs import initialize_params_and_optimizer, generate_neighbor_indices, get_loss
+from gt_feat import get_gt_features
 import mmcv  
 from utils.params_utils import merge_hparams 
 
@@ -41,11 +42,7 @@ def feature_training(dataset, opt, hyper, saving_iterations, iteration, debug_fr
     
     # 像render.py一样加载训练结果
     scene = Scene(dataset, gaussians, load_iteration=iteration)
-    # first_iter = scene.loaded_iter
     timer.start()
-
-    # bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
-    # background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
     viewpoint_stack = None
 
@@ -74,7 +71,7 @@ def feature_training(dataset, opt, hyper, saving_iterations, iteration, debug_fr
         cam_id = 0
 
         # 3.2 生成当前帧的gt_feat
-        gt_feat = get_gt_feat(sequence, frame_idx, cam_id)
+        gt_feat = get_gt_features(sequence,640,512, frame_idx)
 
         # 3.3 进行当前帧的训练
         loss = get_loss(params, attn, gt_feat, neighbor_indices, gaussians, camera)
@@ -109,10 +106,10 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Feature training")
     model = ModelParams(parser, sentinel=True)
     opt = OptimizationParams(parser)
-    hyper = ModelHiddenParams(parser)
-    parser.add_argument('--debug_from', default=-1, type=int)
-    # parser.add_argument('--detect_anomaly', action='store_true', help='Enable pytorch anomaly detection')
-    parser.add_argument('--extra_mark', default='', type=str)
+    hyperparam = FDMHiddenParams(parser)
+    # parser.add_argument('--debug_from', default=-1, type=int)
+    parser.add_argument('--detect_anomaly', action='store_true', default=True)
+    # parser.add_argument('--extra_mark', default='', type=str)
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[3000, ])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--iteration", type=int, default=3000, help="Load model at this iteration")
@@ -122,8 +119,9 @@ if __name__ == "__main__":
     parser.add_argument("--attn_lr", type=float, default=0.00016, help="Learning rate for attention model")
     parser.add_argument("--first_iter", type=int, default=0, help="Start training from this iteration")
     parser.add_argument("--final_iter", type=int, default=3000, help="Final training iteration")
-    parser.add_argument("--model_path", type=str, default="./output", help="Path to the model")
-    args = parser.parse_args()
+    # parser.add_argument("--model_path", type=str, default="./output", help="Path to the model")
+    # args = parser.parse_args(sys.argv[1:])
+    args = get_combined_args(parser)
 
     if args.configs:
         config = mmcv.Config.fromfile(args.configs)
@@ -143,6 +141,6 @@ if __name__ == "__main__":
 
     safe_state(args.quiet)
 
-    feature_training(dataset,opt.extract(args), hyper.extract(args),args.save_iterations,args.iteration,
+    feature_training(dataset,opt.extract(args), hyperparam.extract(args),args.save_iterations,args.iteration,
                      args.debug_from,args.expname,args.extra_mark,True,args.legs_lr,args.attn_lr,
                      args.first_iter, args.final_iter)

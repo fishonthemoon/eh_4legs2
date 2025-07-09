@@ -47,6 +47,13 @@ def params2rendervar(params):
 
 
 def l1_loss_v1(x, y):
+    print("y:", y.shape)
+    print("y:", y.dtype)
+    print("x:", x.shape)
+    print("x:", x.dtype)
+    print(f"x 所在的设备: {x.device}")
+    print(f"y 所在的设备: {y.device}")
+    torch.cuda.empty_cache()
     return torch.abs((x - y)).mean()
 
 def l2_loss_feat(x, y):

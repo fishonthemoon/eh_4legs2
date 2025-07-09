@@ -98,19 +98,47 @@ def get_gt_feat(sequence, frame_idx, cam_id=0, args=None):
     batch = torch.stack(torch.meshgrid(torch.arange(h), torch.arange(w)), dim=-1).reshape(-1, 2).cpu()
     batch = torch.cat([(torch.zeros(batch.shape[0]) + cam_id).reshape(-1, 1).long(), batch], dim=-1).cpu()  # 用 cam_id 替换 index，逻辑一致
 
+
+    print("interpolator.data_dict.keys(): ",interpolator.data_dict.keys())
     # 从插值器获取原始特征
     full = torch.zeros((h * w, ENCODER_FEATURE_DIM), device="cuda")
     for k in interpolator.data_dict.keys():
         full += interpolator.data_dict[k](batch)
     full /= len(interpolator.data_dict.keys())
 
+    # print("full shape ",full.shape)
+
     # 自编码器解码生成 128 维特征
     with torch.no_grad():
         full = ae.encode(full).permute(1,0)
+        # print("full shape ",full.shape)
+
+    if torch.isnan(full).any() or torch.isinf(full).any():
+        print("Error0: NaN or Inf detected in 'full' tensor!")
+        # 打印 full 的一些值，帮助调试
+        print(full.min(), full.max(), full.mean())
+        torch.save(full, 'full_tensor_error.pt')  # 保存 full 张量，方便后续分析
+        raise RuntimeError("NaN/Inf detected in full")
     #重塑形状
-    gt_feat = full.reshape(LEGS_FEATURE_DIM,h,w).cpu()
+    # gt_feat = full.reshape(LEGS_FEATURE_DIM,h,w).cpu()
+    gt_feat = full.reshape(LEGS_FEATURE_DIM,h,w).cuda().contiguous()
+    if torch.isnan(gt_feat).any() or torch.isinf(gt_feat).any():
+        print("Error1: NaN or Inf detected in 'gt_feat' tensor!")
+        print(gt_feat.min(), gt_feat.max(), gt_feat.mean())
+        torch.save(gt_feat, 'gt_feat_tensor_error.pt')
+        raise RuntimeError("NaN/Inf detected in gt_feat")
+
+    # print("gt_feat shape:", gt_feat.shape)
+    # print("gt_feat dtype:", gt_feat.dtype)
+    torch.cuda.synchronize()
+    if torch.isnan(gt_feat).any() or torch.isinf(gt_feat).any():
+        print("Error2: NaN or Inf detected in 'gt_feat' tensor!")
+        print(gt_feat.min(), gt_feat.max(), gt_feat.mean())
+        torch.save(gt_feat, 'gt_feat_tensor_error.pt')
+        raise RuntimeError("NaN/Inf detected in gt_feat")
 
     return gt_feat  # 最终格式：(128, h, w)，与训练代码完全对齐
+
 
 #生成相邻网络
 def generate_neighbor_indices(gaussians):
@@ -154,7 +182,32 @@ def get_loss(params,attn, gt_feat, neighbor_indices,gaussians,camera):
     feats = attn(params["legs_features"],neighbor_indices)   
     torch.cuda.empty_cache() 
     feature_legs = project_features(gaussians, feats, camera)  
+
+    if torch.isnan(gt_feat).any() or torch.isinf(gt_feat).any():
+        print("Error3: NaN or Inf detected in 'gt_feat' tensor!")
+        print(gt_feat.min(), gt_feat.max(), gt_feat.mean())
+        torch.save(gt_feat, 'gt_feat_tensor_error.pt')
+        raise RuntimeError("NaN/Inf detected in gt_feat")
+
+    print("gt_feat shape:", gt_feat.shape)
+    print("gt_feat dtype:", gt_feat.dtype)
+    print("feature_legs shape:", feature_legs.shape)
+    print("feature_legs dtype:", feature_legs.dtype)
+    print(f"gt_feat 所在的设备: {gt_feat.device}")
+    print(f"feature_legs 所在的设备: {feature_legs.device}")
+
+    # 获取 CUDA 设备的总显存
+    total_memory = torch.cuda.get_device_properties(0).total_memory
+    # 获取 CUDA 设备已分配的显存
+    allocated_memory = torch.cuda.memory_allocated(0)
+    # 计算剩余显存
+    free_memory = total_memory - allocated_memory
+    # 输出已占用显存和剩余显存
+    print(f"CUDA 设备 0 已占用显存: {allocated_memory / 1024**2:.2f} MB")
+    print(f"CUDA 设备 0 的剩余显存: {free_memory / 1024**2:.2f} MB")
+
     gt_feat = gt_feat.cuda()
+    feature_legs=feature_legs.cuda()
     losses['legs_features'] = l1_loss_v1(feature_legs, gt_feat)
     loss_weights = {'legs_features': 1.0}
     loss = sum([loss_weights[k] * v for k, v in losses.items()])
